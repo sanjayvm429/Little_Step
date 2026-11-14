@@ -1,0 +1,35 @@
+# Loopback-only configuration for local development.
+logLevel: info
+logDestinations: [stdout]
+
+rtsp: true
+rtspAddress: 127.0.0.1:8554
+rtspTransports: [tcp]
+
+rtmp: false
+rtmpAddress: 127.0.0.1:1935
+
+hls: true
+hlsAddress: 127.0.0.1:8888
+hlsAlwaysRemux: no
+hlsVariant: fmp4
+
+webrtc: true
+webrtcAddress: 127.0.0.1:8889
+webrtcLocalUDPAddress: 127.0.0.1:8189
+webrtcLocalTCPAddress: 127.0.0.1:8189
+
+srt: false
+moq: false
+
+api: true
+apiAddress: 127.0.0.1:9997
+
+metrics: false
+metricsAddress: 127.0.0.1:9998
+
+paths:
+  sunshine-main:
+    source: publisher
+  rainbow-activity:
+    source: publisher

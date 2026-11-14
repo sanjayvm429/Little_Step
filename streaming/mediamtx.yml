@@ -1,0 +1,70 @@
+# MediaMTX configuration for LittleSteps
+# Docs: https://github.com/bluenviron/mediamtx
+
+logLevel: info
+logDestinations: [stdout]
+
+# RTSP server (receives camera streams)
+rtsp: true
+rtspAddress: :8554
+rtspTransports: [tcp]
+
+# RTMP server (optional)
+rtmp: false
+rtmpAddress: :1935
+
+# HLS server (browser fallback)
+hls: true
+hlsAddress: :8888
+hlsAlwaysRemux: no
+hlsVariant: fmp4
+
+# WebRTC server (low-latency browser streaming)
+webrtc: true
+webrtcAddress: :8889
+webrtcLocalUDPAddress: :8189
+webrtcLocalTCPAddress: :8189
+
+# These protocols are not used by the current dashboard.
+srt: false
+moq: false
+
+# API for health checks / stream management
+api: true
+apiAddress: :9997
+
+# Metrics (optional)
+metrics: false
+metricsAddress: :9998
+
+# The API is not published by Docker Compose and is needed by the backend
+# on the private Compose network to provision camera paths.
+authInternalUsers:
+  - user: any
+    pass:
+    ips: []
+    permissions:
+      - action: publish
+      - action: read
+      - action: playback
+      - action: api
+
+# Path defaults: any stream key is allowed; cameras push RTSP to rtsp://mediamtx:8554/<streamKey>
+# For simulated cameras, use MediaMTX's built-in test source:
+#   ffmpeg -re -f lavfi -i testsrc=size=640x480:rate=15 -f lavfi -i sine=frequency=440 -c:v libx264 -c:a aac -f rtsp rtsp://localhost:8554/sunshine-main
+
+paths:
+  # Simulated camera paths — MediaMTX "source: publisher" accepts RTSP pushes.
+  # In production, replace with real camera RTSP pulls:
+  #   source: rtsp://<camera-ip>:554/stream
+  #   sourceOnDemand: yes
+  sunshine-main:
+    source: publisher
+  rainbow-activity:
+    source: publisher
+  # Add more paths as cameras are registered.
+  # Example real camera:
+  # classroom1-cam1:
+  #   source: rtsp://admin:password@192.168.1.50:554/Streaming/Channels/101
+  #   sourceOnDemand: yes
+  #   sourceProtocol: tcp
