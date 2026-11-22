@@ -30,4 +30,48 @@
   .badge {
     @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold;
   }
+
+  .admin-theme {
+    color-scheme: dark;
+  }
+  .admin-theme .card {
+    border-color: #1e293b;
+    background-color: #0d121b;
+    color: #e2e8f0;
+    box-shadow: 0 10px 24px rgb(0 0 0 / 10%);
+  }
+  .admin-theme .input {
+    border-color: #334155;
+    background-color: rgb(2 6 23 / 70%);
+    color: #e2e8f0;
+  }
+  .admin-theme .input::placeholder {
+    color: #64748b;
+  }
+  .admin-theme .label {
+    color: #94a3b8;
+  }
+  .admin-theme .bg-white {
+    background-color: #0d121b;
+  }
+  .admin-theme .bg-slate-50,
+  .admin-theme .bg-slate-100 {
+    background-color: #0f172a;
+  }
+  .admin-theme .border-slate-100,
+  .admin-theme .border-slate-200 {
+    border-color: #1e293b;
+  }
+  .admin-theme .text-slate-900,
+  .admin-theme .text-slate-800 {
+    color: #f1f5f9;
+  }
+  .admin-theme .text-slate-700,
+  .admin-theme .text-slate-600 {
+    color: #cbd5e1;
+  }
+  .admin-theme .text-slate-500,
+  .admin-theme .text-slate-400 {
+    color: #94a3b8;
+  }
 }

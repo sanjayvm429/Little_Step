@@ -24,6 +24,8 @@ export const config = {
     apiUrl: process.env.MEDIAMTX_API_URL ?? 'http://localhost:9997',
     webrtcUrl: process.env.MEDIAMTX_WEBRTC_URL ?? 'ws://localhost:8889',
     hlsUrl: process.env.MEDIAMTX_HLS_URL ?? 'http://localhost:8888',
+    executablePath: process.env.MEDIAMTX_EXECUTABLE_PATH,
+    localConfigPath: process.env.MEDIAMTX_LOCAL_CONFIG_PATH,
   },
   streamTokenSecret: required('STREAM_TOKEN_SECRET'),
   streamTokenExpiresIn: process.env.STREAM_TOKEN_EXPIRES_IN ?? '5m',

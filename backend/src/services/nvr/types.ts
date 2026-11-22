@@ -53,6 +53,8 @@ export interface INvrAdapter {
   discoverCameras(creds: NvrCredentials): Promise<DiscoveredChannel[]>;
   /** Build the RTSP URL for a channel (used server-side for MediaMTX ingest). */
   getLiveStreamUrl(creds: NvrCredentials, channelNumber: number): string;
+  /** Prepare a browser-compatible live stream for a channel, when supported. */
+  prepareLiveStream?(creds: NvrCredentials, channelNumber: number): Promise<void>;
   /** Search recordings for a channel within a time range. */
   searchRecordings(creds: NvrCredentials, channelNumber: number, start: Date, end: Date): Promise<RecordingSegment[]>;
   /** Start playback of a recording segment; returns a browser-playable URL or unsupported. */

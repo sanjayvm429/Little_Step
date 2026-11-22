@@ -55,6 +55,7 @@ export class HikvisionAdapter implements INvrAdapter {
     };
 
     try {
+      await this.prepareLiveStream(creds, 1);
       await verifyRtspVideo(this.getLiveStreamUrl(creds, 1), creds);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'RTSP video verification failed';
@@ -107,8 +108,32 @@ export class HikvisionAdapter implements INvrAdapter {
   }
 
   getLiveStreamUrl(creds: NvrCredentials, channelNumber: number): string {
-    const mainChannel = channelNumber * 100 + 1;
-    return `${rtspBase(creds)}/Streaming/Channels/${mainChannel}`;
+    const substreamChannel = channelNumber * 100 + 2;
+    return `${rtspBase(creds)}/Streaming/Channels/${substreamChannel}`;
+  }
+
+  async prepareLiveStream(creds: NvrCredentials, channelNumber: number): Promise<void> {
+    const client = createNvrHttpClient(creds, 15000);
+    for (const streamId of [channelNumber * 100 + 1, channelNumber * 100 + 2]) {
+      const response = await client.get(`/ISAPI/Streaming/channels/${streamId}`);
+      if (response.status !== 200 || typeof response.data !== 'string') {
+        throw new Error(`Could not read Hikvision stream ${streamId} configuration`);
+      }
+      if (!/<videoCodecType>H\.265<\/videoCodecType>/i.test(response.data)) continue;
+
+      const h264Config = response.data.replace(
+        /<videoCodecType>H\.265<\/videoCodecType>/i,
+        '<videoCodecType>H.264</videoCodecType>',
+      );
+      const update = await client.put(
+        `/ISAPI/Streaming/channels/${streamId}`,
+        h264Config,
+        { headers: { 'Content-Type': 'application/xml' } },
+      );
+      if (update.status < 200 || update.status >= 300) {
+        throw new Error(`Could not configure Hikvision stream ${streamId} as H.264 (HTTP ${update.status})`);
+      }
+    }
   }
 
   async searchRecordings(creds: NvrCredentials, channelNumber: number, start: Date, end: Date): Promise<RecordingSegment[]> {

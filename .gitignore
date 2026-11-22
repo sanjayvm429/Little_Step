@@ -3,6 +3,7 @@
 **/dist/
 **/coverage/
 **/*.tsbuildinfo
+backend/stream-output/
 
 # Local configuration and secrets
 .env

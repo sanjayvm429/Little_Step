@@ -1,10 +1,14 @@
 import axios from 'axios';
+import { spawn, type ChildProcess } from 'node:child_process';
+import path from 'node:path';
 import { config } from '../config/index.js';
 import { Camera } from '../models/Camera.js';
 import { NvrDevice } from '../models/NvrDevice.js';
 import { decrypt } from '../config/index.js';
 import { getAdapter } from './nvr/registry.js';
 import { resolveRtspUrl } from '../controllers/cameraController.js';
+
+let localMediaMtxProcess: ChildProcess | undefined;
 
 /**
  * Provisions a MediaMTX path for a camera so the browser can consume
@@ -72,13 +76,102 @@ export async function removeStreamPath(streamKey: string): Promise<void> {
   }
 }
 
+let streamReconcileRunning = false;
+
+export async function ensureMediaMtxAvailable(): Promise<boolean> {
+  try {
+    await axios.get(`${config.mediamtx.apiUrl}/v3/paths/list`, { timeout: 3000 });
+    return true;
+  } catch {
+    // Docker/production environments should start MediaMTX through their orchestrator.
+  }
+
+  if (config.env !== 'development' || process.platform !== 'win32') return false;
+
+  if (!localMediaMtxProcess) {
+    const executable = config.mediamtx.executablePath
+      ?? path.resolve(process.cwd(), '../streaming/mediamtx-bin/mediamtx.exe');
+    const configPath = config.mediamtx.localConfigPath
+      ?? path.resolve(process.cwd(), '../streaming/mediamtx.local.yml');
+    try {
+      localMediaMtxProcess = spawn(executable, [configPath], {
+        stdio: 'ignore',
+        windowsHide: true,
+      });
+      localMediaMtxProcess.once('exit', () => {
+        localMediaMtxProcess = undefined;
+      });
+      localMediaMtxProcess.once('error', () => {
+        localMediaMtxProcess = undefined;
+      });
+    } catch (error) {
+      console.warn(
+        '[Streaming] Could not start local MediaMTX:',
+        error instanceof Error ? error.message : error,
+      );
+      return false;
+    }
+  }
+
+  const deadline = Date.now() + 15000;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    try {
+      await axios.get(`${config.mediamtx.apiUrl}/v3/paths/list`, { timeout: 3000 });
+      console.log('[Streaming] Local MediaMTX is available');
+      return true;
+    } catch {
+      // Keep waiting for MediaMTX startup.
+    }
+  }
+  return false;
+}
+
+export function stopLocalMediaMtx(): void {
+  if (localMediaMtxProcess && !localMediaMtxProcess.killed) {
+    localMediaMtxProcess.kill();
+  }
+  localMediaMtxProcess = undefined;
+}
+
+export async function reconcileEnabledCameraStreams(): Promise<void> {
+  if (streamReconcileRunning) return;
+  streamReconcileRunning = true;
+  try {
+    const mediaMtxAvailable = await ensureMediaMtxAvailable();
+    if (!mediaMtxAvailable) {
+      console.warn('[Streaming] MediaMTX is unavailable; stream reconciliation is deferred');
+      return;
+    }
+    await axios.get(`${config.mediamtx.apiUrl}/v3/paths/list`, { timeout: 5000 });
+    const cameras = await Camera.find({ isEnabled: true });
+    await Promise.all(cameras.map(async (camera) => {
+      try {
+        await provisionStreamPath(camera);
+      } catch (error) {
+        console.warn(
+          `[Streaming] Could not reconcile ${camera.name} (${camera.streamKey}):`,
+          error instanceof Error ? error.message : error,
+        );
+      }
+    }));
+  } catch {
+    console.warn('[Streaming] MediaMTX is not reachable; stream reconciliation is deferred');
+  } finally {
+    streamReconcileRunning = false;
+  }
+}
+
+export function startStreamSelfHealing(intervalMs = 60000): NodeJS.Timeout {
+  void reconcileEnabledCameraStreams();
+  return setInterval(() => {
+    void reconcileEnabledCameraStreams();
+  }, intervalMs);
+}
+
 /** Resolve the full RTSP URL for a camera, including NVR-derived URLs. */
 async function resolveCameraRtspUrl(camera: InstanceType<typeof Camera>): Promise<string | null> {
-  // Direct RTSP or legacy standalone
-  const direct = resolveRtspUrl(camera);
-  if (direct) return direct;
-
-  // NVR-linked camera: build URL via adapter
+  // NVR-linked cameras must use the adapter before any legacy direct RTSP fields.
   if (camera.nvr && camera.channelNumber) {
     const nvr = await NvrDevice.findById(camera.nvr);
     if (!nvr) return null;
@@ -90,8 +183,15 @@ async function resolveCameraRtspUrl(camera: InstanceType<typeof Camera>): Promis
       username: nvr.usernameEnc ? decrypt(nvr.usernameEnc) : undefined,
       password: nvr.passwordEnc ? decrypt(nvr.passwordEnc) : undefined,
     };
+    if (adapter.prepareLiveStream) {
+      await adapter.prepareLiveStream(creds, camera.channelNumber);
+    }
     return adapter.getLiveStreamUrl(creds, camera.channelNumber);
   }
+
+  // Direct RTSP or legacy standalone
+  const direct = resolveRtspUrl(camera);
+  if (direct) return direct;
 
   return null;
 }

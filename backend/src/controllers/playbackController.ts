@@ -49,6 +49,20 @@ async function configurePlaybackPath(streamKey: string, source: string): Promise
       throw new ApiError(502, 'The streaming service could not configure recording playback');
     }
   }
+
+  const deadline = Date.now() + 15000;
+  while (Date.now() < deadline) {
+    try {
+      const { data } = await axios.get(`${config.mediamtx.apiUrl}/v3/paths/list`, { timeout: 5000 });
+      const path = (data.items as { name?: string; online?: boolean }[] | undefined)
+        ?.find((item) => item.name === streamKey);
+      if (path?.online) return;
+    } catch {
+      // Retry until MediaMTX exposes the playback path.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+  throw new ApiError(502, 'The recording stream did not become available within 15 seconds');
 }
 
 /** Get playback capability for a camera's NVR */
@@ -195,6 +209,10 @@ export const proxyPlaybackHls = asyncHandler(async (req: Request, res: Response)
       break;
     } catch (error) {
       if (axios.isAxiosError(error) && error.response?.status === 404 && resource === 'index.m3u8' && attempt < 10) {
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        continue;
+      }
+      if (axios.isAxiosError(error) && error.response?.status === 503 && attempt < 10) {
         await new Promise((resolve) => setTimeout(resolve, 400));
         continue;
       }

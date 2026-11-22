@@ -25,6 +25,12 @@ services:
     volumes:
       - ./streaming/mediamtx.yml:/mediamtx.yml:ro
     command: ["/mediamtx.yml"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:9997/v3/paths/list || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
 
   backend:
     build:
@@ -43,7 +49,7 @@ services:
       mongo:
         condition: service_healthy
       mediamtx:
-        condition: service_started
+        condition: service_healthy
     volumes:
       - ./backend/uploads:/app/uploads
 
