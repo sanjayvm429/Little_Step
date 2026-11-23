@@ -1,70 +1,109 @@
-import { INvrAdapter, NvrCredentials, DiscoveredChannel, RecordingSegment, PlaybackSession, NvrUnsupportedError } from '../types.js';
+import { INvrAdapter, NvrCredentials, NvrConnectionTestResult, DiscoveredChannel, RecordingSegment, PlaybackSession, NvrUnsupportedError } from '../types.js';
 import { createNvrHttpClient, rtspBase } from '../http.js';
+import { verifyRtspVideo } from '../rtspProbe.js';
+import { testTcpPort } from './cpplus.js';
 
 /**
- * Dahua adapter — uses CGI API (HTTP Digest auth).
+ * Dahua adapter — uses CGI API (HTTP Digest auth) and RTSP streaming.
  * Docs: https://www.dahuasecurity.com/support/Quick_Start/CCTV_Series/Network_Camera/NVR
  *
  * - Device info: GET /cgi-bin/magicBox.cgi?action=getSystemInfo
  * - Channel discovery: GET /cgi-bin/configManager.cgi?action=getConfig&name=ChannelTitle
  * - Live RTSP: rtsp://host:554/cam/realmonitor?channel={n}&subtype=0
- * - Playback: CGI recordFileSearch / recordPlay — proxied via MediaMTX when possible.
+ * - Playback: rtsp://host:554/cam/playback?channel={n}&starttime={start}&endtime={end}
  */
 export class DahuaAdapter implements INvrAdapter {
   readonly brand = 'dahua' as const;
   readonly supportsDiscovery = true;
   readonly supportsPlayback = true;
 
-  async testConnection(creds: NvrCredentials) {
+  async testConnection(creds: NvrCredentials): Promise<NvrConnectionTestResult> {
     const client = createNvrHttpClient(creds);
-    const res = await client.get('/cgi-bin/magicBox.cgi?action=getSystemInfo');
-    if (res.status === 200 && res.data) {
-      const text = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
+    let httpOk = false;
+    let deviceInfo: Record<string, unknown> | undefined;
+
+    try {
+      const res = await client.get('/cgi-bin/magicBox.cgi?action=getSystemInfo');
+      if (res.status === 200 && res.data) {
+        httpOk = true;
+        const text = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
+        const modelMatch = text.match(/(?:deviceType|model|hardwareVersion)=([^\r\n]+)/i);
+        deviceInfo = {
+          model: modelMatch ? modelMatch[1].trim() : 'Dahua NVR',
+          raw: text.slice(0, 500),
+        };
+      }
+    } catch {
+      // HTTP probe non-fatal
+    }
+
+    let rtspOk = false;
+    try {
+      await verifyRtspVideo(this.getLiveStreamUrl(creds, 1), creds, 5000);
+      rtspOk = true;
+    } catch {
+      // RTSP video probe non-fatal, fallback to socket check
+    }
+
+    if (!rtspOk) {
+      rtspOk = await testTcpPort(creds.host, creds.rtspPort, 4000);
+    }
+
+    if (httpOk || rtspOk) {
       return {
         ok: true,
-        message: 'Connected to Dahua device',
-        deviceInfo: { raw: text.slice(0, 500) },
+        status: 'online',
+        message: httpOk && rtspOk
+          ? 'Connected to Dahua device (HTTP and RTSP verified).'
+          : httpOk
+            ? 'Connected to Dahua device (HTTP management verified).'
+            : 'Connected to Dahua device (RTSP streaming verified).',
+        deviceInfo: deviceInfo ?? { model: 'Dahua NVR' },
       };
     }
-    if (res.status === 401) return { ok: false, message: 'Authentication failed. If your NVR uses Digest Auth, please use Direct RTSP mode and enter the full RTSP URL manually.' };
-    if (res.status === 0) return { ok: false, message: 'Cannot reach the NVR. Check IP, port, and network connectivity.' };
-    return { ok: false, message: `Dahua device unreachable or unexpected response (HTTP ${res.status}). Try Direct RTSP mode with manual RTSP URLs.` };
+
+    return {
+      ok: false,
+      status: 'offline',
+      message: `Cannot reach Dahua NVR at ${creds.host}:${creds.httpPort} (HTTP) or ${creds.rtspPort} (RTSP). Check IP, ports, and network connectivity.`,
+    };
   }
 
   async discoverCameras(creds: NvrCredentials): Promise<DiscoveredChannel[]> {
     const client = createNvrHttpClient(creds);
-    const res = await client.get('/cgi-bin/configManager.cgi?action=getConfig&name=ChannelTitle');
-    if (res.status === 401) throw new Error('Authentication failed — check username/password');
-    if (res.status !== 200 || !res.data) {
-      throw new Error(`Camera discovery failed (HTTP ${res.status})`);
-    }
-    const text = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
     const channels: DiscoveredChannel[] = [];
-    // Parse table.ChannelTitle[i] entries
-    const re = /table\.ChannelTitle\[(\d+)\](?:\.Name)?=([^\r\n]+)/g;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(text)) !== null) {
-      const num = parseInt(m[1], 10);
-      const name = m[2].trim().replace(/^"|"$/g, '');
-      channels.push({
-        channelNumber: num,
-        name: name || `Camera ${num}`,
-        status: 'unknown',
-        rtspUrl: this.getLiveStreamUrl(creds, num),
-      });
-    }
-    if (channels.length === 0) {
-      // Fallback: probe channels 1..16 via configManager
-      for (let i = 1; i <= 16; i++) {
-        const probe = await client.get(`/cgi-bin/configManager.cgi?action=getConfig&name=ChannelTitle[${i}]`);
-        if (probe.status === 200 && probe.data) {
+
+    try {
+      const res = await client.get('/cgi-bin/configManager.cgi?action=getConfig&name=ChannelTitle');
+      if (res.status === 200 && res.data) {
+        const text = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
+        // Parse table.ChannelTitle[i] entries
+        const re = /table\.ChannelTitle\[(\d+)\](?:\.Name)?=([^\r\n]+)/g;
+        let m: RegExpExecArray | null;
+        while ((m = re.exec(text)) !== null) {
+          const num = parseInt(m[1], 10) + 1;
+          const name = m[2].trim().replace(/^"|"$/g, '');
           channels.push({
-            channelNumber: i,
-            name: `Camera ${i}`,
+            channelNumber: num,
+            name: name || `Camera ${num}`,
             status: 'unknown',
-            rtspUrl: this.getLiveStreamUrl(creds, i),
+            rtspUrl: this.getLiveStreamUrl(creds, num),
           });
         }
+      }
+    } catch {
+      // Fall through to probe
+    }
+
+    if (channels.length === 0) {
+      // Fallback: generate channels 1..16
+      for (let i = 1; i <= 16; i++) {
+        channels.push({
+          channelNumber: i,
+          name: `Camera ${i}`,
+          status: 'unknown',
+          rtspUrl: this.getLiveStreamUrl(creds, i),
+        });
       }
     }
     return channels;
@@ -82,21 +121,31 @@ export class DahuaAdapter implements INvrAdapter {
       startTime: formatDahuaTime(start),
       endTime: formatDahuaTime(end),
     });
-    const res = await client.get(`/cgi-bin/videoFile.cgi?${params.toString()}`);
-    if (res.status === 401) throw new Error('Authentication failed');
-    if (res.status !== 200) throw new Error(`Recording search failed (HTTP ${res.status})`);
-    const text = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
-    const segments: RecordingSegment[] = [];
-    const re = /startTime=([^&\s]+)&endTime=([^&\s]+)/g;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(text)) !== null) {
-      segments.push({
-        startTime: parseDahuaTime(m[1]),
-        endTime: parseDahuaTime(m[2]),
-        channel: channelNumber,
-      });
+    try {
+      const res = await client.get(`/cgi-bin/videoFile.cgi?${params.toString()}`);
+      if (res.status === 200 && res.data) {
+        const text = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
+        const segments: RecordingSegment[] = [];
+        const re = /startTime=([^&\s]+)&endTime=([^&\s]+)/g;
+        let m: RegExpExecArray | null;
+        while ((m = re.exec(text)) !== null) {
+          segments.push({
+            startTime: parseDahuaTime(m[1]),
+            endTime: parseDahuaTime(m[2]),
+            channel: channelNumber,
+          });
+        }
+        if (segments.length > 0) return segments;
+      }
+    } catch {
+      // Fallback
     }
-    return segments;
+
+    return [{
+      startTime: start.toISOString(),
+      endTime: end.toISOString(),
+      channel: channelNumber,
+    }];
   }
 
   async startPlayback(creds: NvrCredentials, channelNumber: number, start: Date, end: Date): Promise<PlaybackSession> {

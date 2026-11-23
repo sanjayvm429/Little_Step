@@ -45,6 +45,7 @@ export interface Camera {
   status: 'online' | 'offline' | 'unknown';
   isSimulated: boolean;
   description?: string;
+  ipAddress?: string;
 }
 
 export interface AttendanceRecord {

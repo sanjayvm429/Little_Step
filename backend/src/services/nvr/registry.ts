@@ -2,6 +2,8 @@ import { INvrAdapter, NvrCredentials } from './types.js';
 import { NvrBrand } from '../../models/NvrDevice.js';
 import { HikvisionAdapter } from './adapters/hikvision.js';
 import { DahuaAdapter } from './adapters/dahua.js';
+import { CpPlusAdapter } from './adapters/cpplus.js';
+import { UniviewAdapter } from './adapters/uniview.js';
 import { GenericAdapter } from './adapters/generic.js';
 import { DirectRtspAdapter } from './adapters/directRtsp.js';
 
@@ -11,11 +13,26 @@ export function registerAdapter(adapter: INvrAdapter) {
   brandAdapters.set(adapter.brand, adapter);
 }
 
-registerAdapter(new HikvisionAdapter());
-registerAdapter(new DahuaAdapter());
-registerAdapter(new GenericAdapter()); // fallback for 'other' and unlisted brands
-
+const hikvisionAdapter = new HikvisionAdapter();
+const dahuaAdapter = new DahuaAdapter();
+const cpPlusAdapter = new CpPlusAdapter();
+const univiewAdapter = new UniviewAdapter();
+const genericAdapter = new GenericAdapter();
 const directRtspAdapter = new DirectRtspAdapter();
+
+registerAdapter(hikvisionAdapter);
+registerAdapter(dahuaAdapter);
+registerAdapter(cpPlusAdapter);
+registerAdapter(univiewAdapter);
+registerAdapter(genericAdapter);
+
+// Explicit aliases for all supported brands to ensure clean lookup
+brandAdapters.set('axis', genericAdapter);
+brandAdapters.set('hanwha', genericAdapter);
+brandAdapters.set('bosch', genericAdapter);
+brandAdapters.set('tvt', genericAdapter);
+brandAdapters.set('honeywell', genericAdapter);
+brandAdapters.set('other', genericAdapter);
 
 /**
  * Resolve the adapter for a brand + connection type.
@@ -24,7 +41,7 @@ const directRtspAdapter = new DirectRtspAdapter();
  */
 export function getAdapter(brand: NvrBrand, connectionType: 'http_rtsp' | 'direct_rtsp'): INvrAdapter {
   if (connectionType === 'direct_rtsp') return directRtspAdapter;
-  return brandAdapters.get(brand) ?? brandAdapters.get('other')!;
+  return brandAdapters.get(brand) ?? genericAdapter;
 }
 
 export function getAdapterCapabilities(brand: NvrBrand, connectionType: 'http_rtsp' | 'direct_rtsp') {

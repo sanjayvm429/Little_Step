@@ -170,7 +170,7 @@ export function startStreamSelfHealing(intervalMs = 60000): NodeJS.Timeout {
 }
 
 /** Resolve the full RTSP URL for a camera, including NVR-derived URLs. */
-async function resolveCameraRtspUrl(camera: InstanceType<typeof Camera>): Promise<string | null> {
+export async function resolveCameraRtspUrl(camera: InstanceType<typeof Camera>): Promise<string | null> {
   // NVR-linked cameras must use the adapter before any legacy direct RTSP fields.
   if (camera.nvr && camera.channelNumber) {
     const nvr = await NvrDevice.findById(camera.nvr);

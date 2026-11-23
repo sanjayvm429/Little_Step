@@ -11,6 +11,13 @@ import { removeStreamPath } from '../services/streamManager.js';
 
 const BRANDS: NvrBrand[] = ['hikvision', 'dahua', 'cpplus', 'uniview', 'axis', 'hanwha', 'bosch', 'tvt', 'honeywell', 'other'];
 
+function isValidHost(host: unknown): boolean {
+  if (typeof host !== 'string' || !host.trim()) return false;
+  const h = host.trim();
+  if (isIP(h) === 4 || isIP(h) === 6) return true;
+  return /^(?!-)[a-zA-Z0-9.-]{1,253}(?<!-)$/.test(h);
+}
+
 function sanitize(nvr: object) {
   const { usernameEnc, passwordEnc, ...rest } = nvr as Record<string, unknown>;
   return rest;
@@ -63,8 +70,8 @@ export const createNvr = asyncHandler(async (req: Request, res: Response) => {
 
   if (!BRANDS.includes(brand)) throw new ApiError(400, 'Unsupported NVR brand');
   if (!name || !location || !publicIp) throw new ApiError(400, 'Name, location and public IP are required');
-  if (typeof publicIp !== 'string' || isIP(publicIp) !== 4) {
-    throw new ApiError(400, 'A valid IPv4 address is required');
+  if (!isValidHost(publicIp)) {
+    throw new ApiError(400, 'A valid IPv4 address or hostname is required');
   }
   if (!['http_rtsp', 'direct_rtsp'].includes(connectionType)) throw new ApiError(400, 'Invalid connection type');
   for (const [label, port] of [['HTTP', httpPort], ['RTSP', rtspPort]] as const) {
@@ -149,8 +156,8 @@ export const testNvrConnection = asyncHandler(async (req: Request, res: Response
     brand = body.brand;
     connectionType = body.connectionType ?? 'http_rtsp';
     if (!BRANDS.includes(brand)) throw new ApiError(400, 'Unsupported NVR brand');
-    if (typeof body.publicIp !== 'string' || isIP(body.publicIp) !== 4) {
-      throw new ApiError(400, 'A valid IPv4 address is required');
+    if (!isValidHost(body.publicIp)) {
+      throw new ApiError(400, 'A valid IPv4 address or hostname is required');
     }
     for (const [label, port] of [['HTTP', body.httpPort ?? 80], ['RTSP', body.rtspPort ?? 554]] as const) {
       if (!Number.isInteger(port) || port < 1 || port > 65535) {

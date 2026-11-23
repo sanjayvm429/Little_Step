@@ -25,7 +25,10 @@ const httpRtspSchema = z.object({
   name: z.string().min(2, 'NVR name required'),
   modelNumber: z.string().optional(),
   location: z.string().min(2, 'Location required'),
-  publicIp: z.string().regex(/^(\d{1,3}\.){3}\d{1,3}$/, 'Enter a valid IPv4 address'),
+  publicIp: z.string().min(1, 'Enter an IP address or hostname').refine((val) => {
+    const v = val.trim();
+    return /^(\d{1,3}\.){3}\d{1,3}$/.test(v) || /^[a-zA-Z0-9.-]+$/.test(v);
+  }, 'Enter a valid IPv4 address or hostname'),
   username: z.string().min(1, 'Username required'),
   password: z.string().min(1, 'Password required'),
   httpPort: z.coerce.number().min(1).max(65535).default(80),
@@ -62,7 +65,7 @@ export default function AddNvr() {
   });
   const formData = watch();
 
-  const brandSupportsDiscovery = (brand: string) => ['hikvision', 'dahua'].includes(brand);
+  const brandSupportsDiscovery = (_brand: string) => true;
 
   // ---- HTTP+RTSP handlers ----
   const testConnection = async () => {
@@ -269,12 +272,9 @@ export default function AddNvr() {
             <button type="button" onClick={testConnection} disabled={testing} className="btn-secondary">
               {testing ? <Loader2 size={16} className="animate-spin" /> : <Wifi size={16} />} Test Connection
             </button>
-            <button type="button" onClick={discover} disabled={discovering || !brandSupportsDiscovery(formData.brand ?? '')} className="btn-secondary">
+            <button type="button" onClick={discover} disabled={discovering} className="btn-secondary">
               {discovering ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />} Discover Cameras
             </button>
-            {!brandSupportsDiscovery(formData.brand ?? '') && formData.brand && (
-              <span className="self-center text-xs text-amber-600">Discovery not supported for this brand — use Direct RTSP mode.</span>
-            )}
             <div className="ml-auto flex gap-2">
               <button type="button" onClick={saveNvrOnly} disabled={saving} className="btn-secondary">
                 {saving ? <Loader2 size={16} className="animate-spin" /> : null} Save NVR Only
