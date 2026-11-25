@@ -32,6 +32,29 @@ services:
       retries: 12
       start_period: 10s
 
+  face-service:
+    build:
+      context: ./face-service
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: ./backend/.env
+    environment:
+      FACE_SERVICE_HOST: 0.0.0.0
+      SQLITE_DB_PATH: /data/face_attendance.db
+      PRIVATE_IMAGES_DIR: /data/face_images
+      UNKNOWN_SNAPSHOTS_DIR: /data/unknown_snapshots
+    volumes:
+      - face-data:/data
+    depends_on:
+      mediamtx:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
   backend:
     build:
       context: ./backend
@@ -43,12 +66,16 @@ services:
       MEDIAMTX_API_URL: http://mediamtx:9997
       MEDIAMTX_WEBRTC_URL: ws://localhost:8889
       MEDIAMTX_HLS_URL: http://mediamtx:8888
+      FACE_SERVICE_URL: http://face-service:8001
+      FACE_SERVICE_RTSP_BASE_URL: rtsp://mediamtx:8554
     ports:
       - "5000:5000"
     depends_on:
       mongo:
         condition: service_healthy
       mediamtx:
+        condition: service_healthy
+      face-service:
         condition: service_healthy
     volumes:
       - ./backend/uploads:/app/uploads
@@ -65,3 +92,4 @@ services:
 
 volumes:
   mongo-data:
+  face-data:

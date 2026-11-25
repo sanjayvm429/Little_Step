@@ -36,12 +36,14 @@ import AdminCameras from './pages/admin/CameraManagement';
 import AdminNvrManagement from './pages/admin/NvrManagement';
 import AdminAddNvr from './pages/admin/AddNvr';
 import AdminLiveWall from './pages/admin/LiveWall';
-import AdminPlayback from './pages/admin/Playback';
 import AdminAttendance from './pages/admin/Attendance';
 import AdminActivities from './pages/admin/Activities';
 import AdminAccessRequests from './pages/admin/AccessRequests';
 import AdminNotifications from './pages/admin/Notifications';
 import AdminSettings from './pages/admin/Settings';
+import EmployeeManagement from './pages/admin/EmployeeManagement';
+import FaceAttendance from './pages/admin/FaceAttendance';
+import MobileFaceRegistration from './pages/MobileFaceRegistration';
 
 function ProtectedRoute({ children, roles }: { children: React.ReactNode; roles?: string[] }) {
   const { user, loading } = useAuth();
@@ -58,6 +60,17 @@ function RoleRedirect() {
   return <Navigate to={`/${user.role}/dashboard`} replace />;
 }
 
+function PlaybackPaused() {
+  return (
+    <div className="card border border-slate-700 bg-slate-900/50">
+      <h2 className="font-semibold text-slate-100">Recording playback is temporarily paused</h2>
+      <p className="mt-1 text-sm text-slate-400">
+        The playback feature is retained and can be re-enabled when it is needed.
+      </p>
+    </div>
+  );
+}
+
 export default function App() {
   return (
     <Routes>
@@ -67,6 +80,7 @@ export default function App() {
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route path="/verify-email/:token" element={<VerifyEmailPage />} />
+      <Route path="/mobile-register" element={<MobileFaceRegistration />} />
       <Route path="/dashboard" element={<RoleRedirect />} />
 
       <Route
@@ -124,12 +138,14 @@ export default function App() {
         <Route path="nvrs/add" element={<AdminAddNvr />} />
         <Route path="nvrs/:id/edit" element={<AdminAddNvr />} />
         <Route path="live-wall" element={<AdminLiveWall />} />
-        <Route path="playback" element={<AdminPlayback />} />
+        <Route path="playback" element={<PlaybackPaused />} />
         <Route path="children" element={<AdminChildren />} />
         <Route path="teachers" element={<AdminTeachers />} />
+        <Route path="employees" element={<EmployeeManagement />} />
         <Route path="classrooms" element={<AdminClassrooms />} />
         <Route path="cameras" element={<AdminCameras />} />
         <Route path="attendance" element={<AdminAttendance />} />
+        <Route path="face-attendance" element={<FaceAttendance />} />
         <Route path="activities" element={<AdminActivities />} />
         <Route path="access-requests" element={<AdminAccessRequests />} />
         <Route path="notifications" element={<AdminNotifications />} />

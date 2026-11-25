@@ -22,6 +22,16 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
   if (err instanceof ApiError) {
     return res.status(err.statusCode).json({ success: false, message: err.message });
   }
+  if (
+    err &&
+    typeof err === 'object' &&
+    'name' in err &&
+    err.name === 'MulterError' &&
+    'code' in err &&
+    err.code === 'LIMIT_FILE_SIZE'
+  ) {
+    return res.status(413).json({ success: false, message: 'Image exceeds the 8 MB upload limit' });
+  }
   // Mongoose validation error
   if (err && typeof err === 'object' && 'name' in err && err.name === 'ValidationError') {
     const messages = Object.values((err as unknown as { errors: Record<string, { message: string }> }).errors).map(

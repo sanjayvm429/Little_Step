@@ -32,6 +32,11 @@ export const config = {
   uploadDir: process.env.UPLOAD_DIR ?? 'uploads',
   maxUploadSizeMb: parseInt(process.env.MAX_UPLOAD_SIZE_MB ?? '5', 10),
   notificationProvider: process.env.NOTIFICATION_PROVIDER ?? 'console',
+  faceService: {
+    url: process.env.FACE_SERVICE_URL,
+    secret: process.env.FACE_SERVICE_SECRET,
+    mediamtxRtspBaseUrl: process.env.FACE_SERVICE_RTSP_BASE_URL ?? 'rtsp://mediamtx:8554',
+  },
 };
 
 // AES-256-GCM helpers for encrypting camera credentials at rest

@@ -22,6 +22,7 @@ import incidentsRoutes from './routes/incidents.js';
 import adminRoutes from './routes/admin.js';
 import nvrRoutes from './routes/nvrs.js';
 import playbackRoutes from './routes/playback.js';
+import faceRoutes from './routes/face.js';
 
 export function createApp() {
   const app = express();
@@ -39,7 +40,13 @@ export function createApp() {
   app.use(express.urlencoded({ extended: true }));
   app.use(cookieParser());
   if (config.env !== 'test') {
-    app.use(morgan('dev', { skip: (req) => req.path.includes('/hls/') }));
+    app.use(
+      morgan('dev', {
+        skip: (req) =>
+          req.path.includes('/hls/') ||
+          req.path.startsWith('/api/face/'),
+      }),
+    );
   }
 
   const limiter = rateLimit({
@@ -78,6 +85,7 @@ export function createApp() {
   app.use('/api/playback', playbackRoutes);
   app.use('/api/nvrs', nvrRoutes);
   app.use('/api/admin', adminRoutes);
+  app.use('/api/face', faceRoutes);
 
   app.use(notFound);
   app.use(errorHandler);

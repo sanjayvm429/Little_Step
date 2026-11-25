@@ -8,6 +8,7 @@ A full-stack platform for nurseries, preschools and daycares that lets parents s
 - **Live camera monitoring**: RTSP → MediaMTX → WebRTC/HLS, credentials encrypted at rest, short-lived stream tokens
 - **Child management**: admission numbers, classroom assignment, parent access approval workflow
 - **Attendance**: check-in/check-out, late/absent tracking, parent notifications
+- **Employee face attendance**: admin-only employee enrollment, YuNet/SFace recognition, camera purpose mapping, and SQLite attendance
 - **Daily activities**: meals, naps, learning, play — timeline view for parents
 - **Notifications**: in-app bell with unread count, pluggable email/SMS/push providers
 - **Messaging**: parent ↔ teacher chat with read receipts
@@ -24,6 +25,8 @@ A full-stack platform for nurseries, preschools and daycares that lets parents s
 | Backend | Node.js, Express, TypeScript, JWT, bcrypt, Mongoose |
 | Database | MongoDB |
 | Streaming | MediaMTX (RTSP → WebRTC/HLS) |
+| Face recognition | Python, OpenCV, YuNet, SFace, FastAPI |
+| Employee biometrics | SQLite (AES-GCM protected face templates and images) |
 | Tests | Playwright (TypeScript) |
 
 ## Project Structure
@@ -32,6 +35,7 @@ A full-stack platform for nurseries, preschools and daycares that lets parents s
 LittleSteps/
 ├── frontend/          # React + TS + Vite + Tailwind
 ├── backend/           # Express + TS API
+├── face-service/      # Python/OpenCV recognition worker + private SQLite data
 ├── streaming/         # MediaMTX config + docs
 ├── tests/             # Playwright E2E tests
 ├── docker-compose.yml # MongoDB + MediaMTX + backend + frontend
@@ -41,9 +45,11 @@ LittleSteps/
 ## Quick Start (Docker — recommended)
 
 ```bash
-# 1. Copy env files
+# 1. Copy the backend environment template and set unique secrets
 cp backend/.env.example backend/.env
-# Edit backend/.env — set JWT secrets, ENCRYPTION_KEY, MONGO_URI
+# Generate FACE_SERVICE_SECRET with: python -c "import secrets; print(secrets.token_urlsafe(32))"
+# Generate FACE_DATA_ENCRYPTION_KEY with: python -c "import secrets; print(secrets.token_hex(32))"
+# Use these values in backend/.env; keep them private and back up the encryption key securely.
 
 # 2. Start everything
 docker compose up --build
@@ -77,6 +83,21 @@ npm run dev          # http://localhost:5000
 npm run seed         # seed demo data
 ```
 
+### Face service (local development)
+
+Use the same `FACE_SERVICE_SECRET` and `FACE_DATA_ENCRYPTION_KEY` values as `backend/.env` in `face-service/.env`. Configure `FACE_SERVICE_URL=http://127.0.0.1:8001` and `FACE_SERVICE_RTSP_BASE_URL=rtsp://127.0.0.1:8554` in the backend environment.
+
+```powershell
+cd face-service
+py -3.10 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+Copy-Item .env.example .env
+uvicorn app.main:app --host 127.0.0.1 --port 8001 --no-access-log
+```
+
+In another terminal, start MediaMTX and the backend. The face service reads the existing camera's MediaMTX path; it does not receive NVR credentials or create a second NVR connection.
+
 ### Frontend
 
 ```bash
@@ -95,7 +116,7 @@ docker compose up mediamtx
 .\mediamtx.exe .\streaming\mediamtx.local.yml
 ```
 
-For the first authorized Hikvision test, open **NVR Management** and use the video action on the saved Hikvision NVR to add **channel 1 only**. Then open **Live Wall**; the single real NVR camera is selected first. HLS is served through the backend with a short-lived stream token. Do not expose MediaMTX's HLS or API ports publicly.
+For the first authorized Hikvision test, open **NVR Management** and use the video action on the saved Hikvision NVR to add **channel 1 only**. Then open **Live Wall**; the single real NVR camera is selected first. MediaMTX keeps HLS muxers ready for online paths to avoid first-viewer startup delays. HLS is served through the backend with a short-lived stream token that live players renew before expiry; transient failures retry with capped backoff. Do not expose MediaMTX's HLS or API ports publicly.
 
 This milestone verifies one live camera only. Automatic channel discovery, multiple live streams, and recorded playback remain separate follow-up milestones.
 
@@ -118,6 +139,9 @@ See `backend/.env.example` for all variables. Key ones:
 | `ENCRYPTION_KEY` | 64-hex-char AES-256 key for camera credentials |
 | `MEDIAMTX_*` | MediaMTX API/WebRTC/HLS URLs |
 | `STREAM_TOKEN_SECRET` | Signs short-lived stream access tokens |
+| `FACE_SERVICE_SECRET` | Shared backend-to-face-service authentication key (32+ random characters) |
+| `FACE_DATA_ENCRYPTION_KEY` | 32-byte hexadecimal AES-GCM key for face templates, images, and pending registration data |
+| `FACE_SERVICE_RTSP_BASE_URL` | Private MediaMTX RTSP base visible to the Python service |
 
 Generate secrets:
 ```bash
@@ -142,6 +166,18 @@ Base URL: `/api`
 | Pickup | `GET/POST /pickup-authorizations`, `PUT /pickup-authorizations/:id/review` |
 | Incidents | `GET/POST /incidents`, `PUT /incidents/:id` |
 | Admin | `GET /admin/stats`, `/admin/users`, `/admin/relationships`, `/admin/reports/attendance` |
+| Employee face attendance | `/face/employees`, `/face/registration-links`, `/face/cameras`, `/face/attendance`, `/face/recognition/status` (admin only) |
+| Mobile enrollment | `POST /face/mobile-registration/info`, `POST /face/mobile-registration/submit` (single-use token only) |
+
+## Employee face attendance
+
+Administrators use **Register User** to create an employee record, validate or capture front/left/right images, view and update employees, deactivate an employee, remove face data, or generate a single-use mobile enrollment link and QR code. The public mobile page uses the token in the URL fragment so it is not sent in HTTP requests or access logs. Mobile enrollment requires a reachable HTTPS `CLIENT_URL` in every environment; HTTP and localhost links are rejected because mobile camera access requires a secure context.
+
+**Face Attendance** maps existing dashboard cameras to check-in, check-out, or monitoring-only and displays worker/stream health, employee attendance, recent recognition events, and unknown detections. Check-in/out use the camera's configured purpose, confidence threshold, attendance state, and cooldown. Unknown faces are logged but never registered.
+
+The existing child attendance workflow remains in MongoDB and is unchanged. Employee face templates, private face images, camera-purpose mappings, registration links, and employee attendance live in the face service's SQLite database. Templates, stored face images, pending mobile-registration details, and unknown snapshots are AES-GCM encrypted using `FACE_DATA_ENCRYPTION_KEY`; the key must be retained for as long as that data is needed. The Python service is private to the application network and is not published as a public port.
+
+Configure cameras first in the existing NVR/Camera Management pages. Then choose their purpose in **Face Attendance**. The worker consumes their existing MediaMTX paths, processes frames at the configured interval, and reconnects on stream failure. Tune the SFace cosine threshold against real authorized CCTV footage before enabling attendance processing; the default is a starting point, not a camera-validated accuracy guarantee.
 
 ## Security
 
