@@ -16,7 +16,8 @@ rtmpAddress: :1935
 # HLS server (browser fallback)
 hls: true
 hlsAddress: :8888
-hlsAlwaysRemux: no
+# Keep playlists ready for the first viewer; this uses extra CPU per online path.
+hlsAlwaysRemux: yes
 hlsVariant: fmp4
 
 # WebRTC server (low-latency browser streaming)

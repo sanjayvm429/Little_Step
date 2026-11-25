@@ -68,6 +68,17 @@ export async function provisionStreamPath(camera: InstanceType<typeof Camera> | 
   throw new Error(`MediaMTX path ${camera.streamKey} did not receive a live source within 10 seconds`);
 }
 
+export async function ensureStreamPath(camera: InstanceType<typeof Camera> | { streamKey: string; rtspUrlEnc?: string; nvr?: unknown; channelNumber?: number; connectionType?: string; isSimulated?: boolean }): Promise<void> {
+  if (camera.isSimulated) return;
+
+  const { data } = await axios.get(`${config.mediamtx.apiUrl}/v3/paths/list`, { timeout: 5000 });
+  const path = (data.items as { name?: string; online?: boolean }[] | undefined)
+    ?.find((item) => item.name === camera.streamKey);
+  if (path?.online) return;
+
+  await provisionStreamPath(camera);
+}
+
 export async function removeStreamPath(streamKey: string): Promise<void> {
   try {
     await axios.delete(`${config.mediamtx.apiUrl}/v3/config/paths/delete/${encodeURIComponent(streamKey)}`, { timeout: 5000 });
@@ -143,9 +154,14 @@ export async function reconcileEnabledCameraStreams(): Promise<void> {
       console.warn('[Streaming] MediaMTX is unavailable; stream reconciliation is deferred');
       return;
     }
-    await axios.get(`${config.mediamtx.apiUrl}/v3/paths/list`, { timeout: 5000 });
+    const { data: pathData } = await axios.get(`${config.mediamtx.apiUrl}/v3/paths/list`, { timeout: 5000 });
+    const onlinePaths = new Set<string>();
+    for (const item of (pathData.items as { name?: string; online?: boolean }[] | undefined) ?? []) {
+      if (item.online && item.name) onlinePaths.add(item.name);
+    }
     const cameras = await Camera.find({ isEnabled: true });
     await Promise.all(cameras.map(async (camera) => {
+      if (camera.isSimulated || onlinePaths.has(camera.streamKey)) return;
       try {
         await provisionStreamPath(camera);
       } catch (error) {

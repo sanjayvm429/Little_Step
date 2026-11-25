@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Camera, Wifi, WifiOff, Maximize2, AlertCircle } from 'lucide-react';
 import api, { getErrorMessage } from '../../services/api';
 import { Camera as CameraType, StreamAccess } from '../../types';
+import HlsPlayer from '../../components/HlsPlayer';
 
 export default function ParentLiveMonitoring() {
   const [cameras, setCameras] = useState<CameraType[]>([]);
@@ -10,6 +11,8 @@ export default function ParentLiveMonitoring() {
   const [loading, setLoading] = useState(true);
   const [streamLoading, setStreamLoading] = useState(false);
   const [error, setError] = useState('');
+  const initialStreamRequested = useRef(false);
+  const retryAttempts = useRef(0);
 
   useEffect(() => {
     (async () => {
@@ -22,7 +25,7 @@ export default function ParentLiveMonitoring() {
     })();
   }, []);
 
-  const openStream = async (camera: CameraType) => {
+  const openStream = useCallback(async (camera: CameraType) => {
     setSelected(camera);
     setStream(null);
     setError('');
@@ -35,7 +38,32 @@ export default function ParentLiveMonitoring() {
     } finally {
       setStreamLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (loading || !selected || initialStreamRequested.current) return;
+    initialStreamRequested.current = true;
+    void openStream(selected);
+  }, [loading, openStream, selected]);
+
+  useEffect(() => {
+    if (!error || !selected || streamLoading) return;
+    retryAttempts.current += 1;
+    const delay = Math.min(1000 * (2 ** (retryAttempts.current - 1)), 30000);
+    const timer = window.setTimeout(() => void openStream(selected), delay);
+    return () => window.clearTimeout(timer);
+  }, [error, openStream, selected, streamLoading]);
+
+  useEffect(() => {
+    if (!selected || !stream || stream.isSimulated) return;
+    const remaining = stream.expiresAt - Date.now();
+    const refreshMargin = Math.min(30000, Math.max(1000, Math.floor(remaining * 0.1)));
+    const timer = window.setTimeout(
+      () => void openStream(selected),
+      Math.max(1000, remaining - refreshMargin),
+    );
+    return () => window.clearTimeout(timer);
+  }, [openStream, selected, stream]);
 
   return (
     <div className="space-y-6">
@@ -56,7 +84,10 @@ export default function ParentLiveMonitoring() {
             {cameras.map((cam) => (
               <button
                 key={cam._id}
-                onClick={() => openStream(cam)}
+                onClick={() => {
+                  retryAttempts.current = 0;
+                  void openStream(cam);
+                }}
                 className={`card w-full text-left transition ${selected?._id === cam._id ? 'ring-2 ring-brand-primary' : 'hover:shadow-md'}`}
               >
                 <div className="flex items-center justify-between">
@@ -107,13 +138,15 @@ export default function ParentLiveMonitoring() {
                         <p className="mt-3 text-xs opacity-50">HLS: {stream.hlsUrl}</p>
                       </div>
                     ) : (
-                      <video
-                        className="h-full w-full"
-                        controls
-                        autoPlay
-                        muted
-                        playsInline
+                      <HlsPlayer
+                        className="h-full w-full object-contain"
                         src={stream.hlsUrl}
+                        onPlaybackChange={(playing) => {
+                          if (playing) retryAttempts.current = 0;
+                        }}
+                        onFatalError={() => {
+                          setError('The live stream stopped. Reconnecting…');
+                        }}
                       />
                     )}
                   </>

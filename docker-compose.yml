@@ -42,7 +42,7 @@ services:
       MONGO_URI: mongodb://mongo:27017/littlesteps
       MEDIAMTX_API_URL: http://mediamtx:9997
       MEDIAMTX_WEBRTC_URL: ws://localhost:8889
-      MEDIAMTX_HLS_URL: http://localhost:8888
+      MEDIAMTX_HLS_URL: http://mediamtx:8888
     ports:
       - "5000:5000"
     depends_on:

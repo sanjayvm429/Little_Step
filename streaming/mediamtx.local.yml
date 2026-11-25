@@ -11,7 +11,8 @@ rtmpAddress: 127.0.0.1:1935
 
 hls: true
 hlsAddress: 127.0.0.1:8888
-hlsAlwaysRemux: no
+# Keep playlists ready for the first viewer; this uses extra CPU per online path.
+hlsAlwaysRemux: yes
 hlsVariant: fmp4
 
 webrtc: true

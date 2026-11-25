@@ -22,6 +22,7 @@
    - Run MediaMTX on a private network/VLAN reachable only by cameras and backend
    - Do NOT expose RTSP port 8554 publicly
    - Expose only WebRTC (8889) and HLS (8888) through the backend's auth layer
+   - In Docker Compose, backend HLS requests must use `http://mediamtx:8888`; `localhost` resolves to the backend container itself
    - Consider a TURN server for WebRTC NAT traversal
 
 5. **File uploads**

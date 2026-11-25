@@ -8,7 +8,7 @@ import { encrypt, decrypt, config } from '../config/index.js';
 import { signStreamToken, verifyStreamToken } from '../utils/jwt.js';
 import { assertCameraAccess } from '../services/permissionService.js';
 import { AuditLog } from '../models/AuditLog.js';
-import { provisionStreamPath, removeStreamPath } from '../services/streamManager.js';
+import { ensureStreamPath, provisionStreamPath, removeStreamPath } from '../services/streamManager.js';
 
 function sanitize(camera: object) {
   const { usernameEnc, passwordEnc, rtspUrlEnc, ipAddress, rtspPort, rtspPath, ...rest } = camera as Record<string, unknown>;
@@ -144,7 +144,7 @@ export const getStreamAccess = asyncHandler(async (req: Request, res: Response) 
   if (!camera.isEnabled) throw new ApiError(403, 'This camera is disabled');
 
   try {
-    await provisionStreamPath(camera);
+    await ensureStreamPath(camera);
   } catch (err) {
     console.error('[Camera Stream Provisioning Error]', err instanceof Error ? err.message : err);
     throw new ApiError(503, 'The streaming service could not prepare this camera. Please retry shortly.');

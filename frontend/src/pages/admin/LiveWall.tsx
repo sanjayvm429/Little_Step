@@ -30,6 +30,7 @@ interface CellState {
   camera: CameraType;
   stream?: StreamAccess;
   loading: boolean;
+  playing?: boolean;
   reconnecting?: boolean;
   error?: string;
 }
@@ -62,6 +63,9 @@ export default function LiveWall() {
   const [tourRunning, setTourRunning] = useState(false);
   const [currentTime, setCurrentTime] = useState('');
   const refreshing = useRef(new Set<string>());
+  const retryTimers = useRef(new Map<string, number>());
+  const retryAttempts = useRef(new Map<string, number>());
+  const tokenRefreshTimers = useRef(new Map<string, { expiresAt: number; timeout: number }>());
 
   // Real-time Asia/Kolkata clock
   useEffect(() => {
@@ -92,6 +96,7 @@ export default function LiveWall() {
       const enabled = (camRes.data.cameras || []).filter((c: CameraType) => c.isEnabled);
       setCameras(enabled);
       setNvrs(nvrRes.data.nvrs || []);
+      setLoadError('');
     } catch (err) {
       setLoadError(getErrorMessage(err));
     } finally {
@@ -102,6 +107,13 @@ export default function LiveWall() {
   useEffect(() => {
     fetchCamerasAndNvrs();
   }, [fetchCamerasAndNvrs]);
+
+  useEffect(() => () => {
+    retryTimers.current.forEach((timer) => window.clearTimeout(timer));
+    retryTimers.current.clear();
+    tokenRefreshTimers.current.forEach(({ timeout }) => window.clearTimeout(timeout));
+    tokenRefreshTimers.current.clear();
+  }, []);
 
   // Extract locations & departments
   const locations = useMemo(() => {
@@ -130,9 +142,10 @@ export default function LiveWall() {
       }
       if (selectedStatus !== 'all') {
         const cell = cells.get(cam._id);
+        if (!cell) return true;
         const isOffline = cell?.error && !cell?.loading;
-        const isLive = cell?.stream && !cell?.loading && !cell?.error;
-        const isReconn = cell?.reconnecting || cell?.loading;
+        const isLive = cell?.stream && !cell?.loading && !cell?.error && (cell.playing || cell.stream.isSimulated);
+        const isReconn = cell?.reconnecting || cell?.loading || Boolean(cell?.stream && !cell.playing && !cell.stream.isSimulated);
         if (selectedStatus === 'live' && !isLive) return false;
         if (selectedStatus === 'reconnecting' && !isReconn) return false;
         if (selectedStatus === 'offline' && !isOffline) return false;
@@ -156,6 +169,10 @@ export default function LiveWall() {
     const start = (currentPage - 1) * pageSize;
     return filteredCameras.slice(start, start + pageSize);
   }, [filteredCameras, currentPage, pageSize]);
+  const liveCount = pageCameras.reduce((count, camera) => {
+    const cell = cells.get(camera._id);
+    return count + Number(Boolean(cell?.stream && !cell.loading && !cell.error && (cell.playing || cell.stream.isSimulated)));
+  }, 0);
 
   // Load stream for a camera
   const loadStream = useCallback(async (camera: CameraType): Promise<CellState> => {
@@ -167,44 +184,33 @@ export default function LiveWall() {
     }
   }, []);
 
-  // Auto-play all cameras on the current page
+  // Load each visible camera once; cell updates must not restart stream requests.
   useEffect(() => {
-    let cancelled = false;
-
-    // Initialize loading states for current page cameras if not yet loaded
-    setCells(prev => {
-      const next = new Map(prev);
-      pageCameras.forEach(cam => {
-        if (!next.has(cam._id)) {
-          next.set(cam._id, { camera: cam, loading: true });
-        }
-      });
-      return next;
-    });
-
-    // Fetch stream access for all page cameras
     pageCameras.forEach(camera => {
-      loadStream(camera).then(cellState => {
-        if (!cancelled) {
-          setCells(prev => {
-            const next = new Map(prev);
-            next.set(camera._id, cellState);
-            return next;
-          });
-        }
+      if (cells.has(camera._id) || refreshing.current.has(camera._id)) return;
+      refreshing.current.add(camera._id);
+      setCells(prev => {
+        if (prev.has(camera._id)) return prev;
+        const next = new Map(prev);
+        next.set(camera._id, { camera, loading: true });
+        return next;
       });
+      void loadStream(camera).then(cellState => {
+        setCells(prev => new Map(prev).set(camera._id, cellState));
+      }).finally(() => refreshing.current.delete(camera._id));
     });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [pageCameras, loadStream]);
+  }, [pageCameras, loadStream, cells]);
 
   // Reconnect a specific cell
   const reconnectCell = useCallback(async (cameraId: string) => {
     const camera = cameras.find(c => c._id === cameraId);
     if (!camera || refreshing.current.has(cameraId)) return;
     refreshing.current.add(cameraId);
+    const retryTimer = retryTimers.current.get(cameraId);
+    if (retryTimer !== undefined) {
+      window.clearTimeout(retryTimer);
+      retryTimers.current.delete(cameraId);
+    }
 
     setCells(prev => {
       const next = new Map(prev);
@@ -226,6 +232,100 @@ export default function LiveWall() {
       refreshing.current.delete(cameraId);
     }
   }, [cameras, loadStream]);
+
+  const scheduleReconnect = useCallback((cameraId: string) => {
+    if (retryTimers.current.has(cameraId)) return;
+    const attempt = (retryAttempts.current.get(cameraId) ?? 0) + 1;
+    retryAttempts.current.set(cameraId, attempt);
+    const delay = Math.min(1000 * (2 ** (attempt - 1)), 30000);
+    const timer = window.setTimeout(() => {
+      retryTimers.current.delete(cameraId);
+      void reconnectCell(cameraId);
+    }, delay);
+    retryTimers.current.set(cameraId, timer);
+  }, [reconnectCell]);
+
+  useEffect(() => {
+    const visibleIds = new Set(pageCameras.map(camera => camera._id));
+    for (const [cameraId, timer] of retryTimers.current) {
+      if (!visibleIds.has(cameraId)) {
+        window.clearTimeout(timer);
+        retryTimers.current.delete(cameraId);
+        retryAttempts.current.delete(cameraId);
+      }
+    }
+
+    pageCameras.forEach(camera => {
+      const cell = cells.get(camera._id);
+      if (cell?.error && !cell.loading) {
+        scheduleReconnect(camera._id);
+      } else if (cell?.stream && !cell.loading && !cell.error && (cell.playing || cell.stream.isSimulated)) {
+        retryAttempts.current.delete(camera._id);
+        const timer = retryTimers.current.get(camera._id);
+        if (timer !== undefined) {
+          window.clearTimeout(timer);
+          retryTimers.current.delete(camera._id);
+        }
+      }
+    });
+  }, [cells, pageCameras, scheduleReconnect]);
+
+  useEffect(() => {
+    const visibleIds = new Set(pageCameras.map(camera => camera._id));
+    for (const [cameraId, timer] of tokenRefreshTimers.current) {
+      if (!visibleIds.has(cameraId)) {
+        window.clearTimeout(timer.timeout);
+        tokenRefreshTimers.current.delete(cameraId);
+      }
+    }
+
+    pageCameras.forEach(camera => {
+      const cell = cells.get(camera._id);
+      const expiresAt = cell?.stream?.expiresAt;
+      const currentTimer = tokenRefreshTimers.current.get(camera._id);
+      if (!expiresAt || cell?.stream?.isSimulated || cell?.loading || cell?.error) {
+        if (currentTimer) {
+          window.clearTimeout(currentTimer.timeout);
+          tokenRefreshTimers.current.delete(camera._id);
+        }
+        return;
+      }
+      if (currentTimer?.expiresAt === expiresAt) return;
+      if (currentTimer) window.clearTimeout(currentTimer.timeout);
+      const remaining = expiresAt - Date.now();
+      const refreshMargin = Math.min(30000, Math.max(1000, Math.floor(remaining * 0.1)));
+      const delay = Math.max(1000, remaining - refreshMargin);
+      const timeout = window.setTimeout(() => {
+        tokenRefreshTimers.current.delete(camera._id);
+        void reconnectCell(camera._id);
+      }, delay);
+      tokenRefreshTimers.current.set(camera._id, { expiresAt, timeout });
+    });
+  }, [cells, pageCameras, reconnectCell]);
+
+  const updatePlaybackState = useCallback((
+    cameraId: string,
+    playing: boolean,
+    error?: string,
+    retryable = true,
+  ) => {
+    setCells(prev => {
+      const cell = prev.get(cameraId);
+      if (!cell) return prev;
+      const reconnecting = !playing && !error;
+      if (cell.playing === playing && cell.reconnecting === reconnecting && cell.error === error) return prev;
+      const next = new Map(prev);
+      next.set(cameraId, {
+        ...cell,
+        playing,
+        reconnecting,
+        error,
+      });
+      return next;
+    });
+    if (playing) retryAttempts.current.delete(cameraId);
+    if (error && retryable) scheduleReconnect(cameraId);
+  }, [scheduleReconnect]);
 
   // Auto-tour timer
   useEffect(() => {
@@ -269,9 +369,15 @@ export default function LiveWall() {
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-base font-bold tracking-tight text-white">Live Video Wall</h2>
-              <span className="flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-400 border border-emerald-500/20">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                Server network: Excellent
+              <span className={`flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium border ${
+                pageCameras.length > 0 && liveCount === pageCameras.length
+                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                  : 'bg-amber-500/10 text-amber-300 border-amber-500/20'
+              }`}>
+                <span className={`h-1.5 w-1.5 rounded-full animate-pulse ${
+                  pageCameras.length > 0 && liveCount === pageCameras.length ? 'bg-emerald-400' : 'bg-amber-400'
+                }`} />
+                {pageCameras.length > 0 ? `${liveCount}/${pageCameras.length} streams live` : 'No cameras selected'}
                 <ChevronDown size={11} className="opacity-60" />
               </span>
             </div>
@@ -433,8 +539,12 @@ export default function LiveWall() {
         <div className={`grid gap-2.5 ${gridClass}`}>
           {pageCameras.map((camera, index) => {
             const cell = cells.get(camera._id) || { camera, loading: true };
-            const isLive = cell.stream && !cell.loading && !cell.error;
-            const isReconnecting = cell.reconnecting || cell.loading;
+            const isLive = Boolean(cell.stream && !cell.loading && !cell.error && (cell.playing || cell.stream.isSimulated));
+            const isReconnecting = !cell.error && (
+              cell.reconnecting
+              || cell.loading
+              || Boolean(cell.stream && !cell.playing && !cell.stream.isSimulated)
+            );
             const isOffline = cell.error && !cell.loading;
             const camDisplayId = `CAM-${String((currentPage - 1) * pageSize + index + 1).padStart(3, '0')}`;
 
@@ -497,6 +607,8 @@ export default function LiveWall() {
                       <HlsPlayer
                         className="h-full w-full object-contain"
                         src={cell.stream.hlsUrl}
+                        onPlaybackChange={(playing, error, retryable) => updatePlaybackState(camera._id, playing, error, retryable)}
+                        onFatalError={() => scheduleReconnect(camera._id)}
                       />
                     )
                   ) : null}
@@ -516,6 +628,7 @@ export default function LiveWall() {
                     <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/80 px-4 text-center">
                       <WifiOff size={24} className="mb-2 text-rose-400 opacity-80" />
                       <p className="text-xs font-medium text-rose-300">Camera Offline</p>
+                      {cell.error && <p className="mt-1 max-w-[90%] text-[10px] text-slate-400">{cell.error}</p>}
                       <button
                         onClick={() => reconnectCell(camera._id)}
                         className="mt-2 inline-flex items-center gap-1 rounded bg-slate-800 px-2.5 py-1 text-[11px] font-semibold text-slate-200 hover:bg-slate-700 transition"
